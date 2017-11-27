@@ -511,28 +511,35 @@ proc insertionSort(Data: [?Dom] ?eltType, comparator:?rec=defaultComparator)
 
 
 /*
-   Sort the 1D array `Data` in-place using a sequential, stable binary insertion sort algorithm.
-   Should be used when there is a high cost of comparison.
+   Sort the 1D array `Data` in-place using a sequential, stable binary insertion
+   sort algorithm. Should be used when there is a high cost of comparison.
 
    :arg Data: The array to be sorted
    :type Data: [] `eltType`
    :arg comparator: :ref:`Comparator <comparators>` record that defines how the
       data is sorted.
+   :arg lo: Lower bound of sort
+   :type lo: `Dom.idxType`
+   :arg hi: Upper bound of sort
+   :type hi: `Dom.idxType`
 
  */
-proc binaryInsertionSort(Data: [?Dom] ?eltType, comparator:?rec=defaultComparator) {
+proc binaryInsertionSort(Data: [?Dom] ?eltType,
+                         comparator:?rec=defaultComparator,
+                         in lo=Dom.low, in hi=Dom.high) {
   chpl_check_comparator(comparator, eltType);
-  const low = Dom.low,
-        high = Dom.high,
-        stride = abs(Dom.stride);
+  const stride = if Dom.stridable then abs(Dom.stride) else 1;
 
-  for i in low..high by stride {
-    var valToInsert = Data[i],
-        lo = low,
-        hi = i - stride; 
+  for i in lo+stride..hi by stride {
+    // swap valToInsert=Data[i] into its sorted position
+    // precondition: Data[lo..i-stride] is sorted
+    // postcondition: Data[lo..i] is sorted
+    var valToInsert = Data[i];
+    var (found, loc) = _binarySearchForLastOccurrence(Data, valToInsert,
+                                                      comparator, lo, i-stride);
 
-    var (found, loc) = _binarySearchForLastOccurrence(Data, valToInsert, comparator, lo, hi);
-    loc = if found then loc + stride else loc;              // insert after last occurrence if exists; else insert after expected location
+    // insert after last occurrence if exists; else insert after expected loc
+    loc = if found then loc + stride else loc;
 
     for j in loc..i-stride by -stride {
       // backward swap until loc
@@ -544,21 +551,27 @@ proc binaryInsertionSort(Data: [?Dom] ?eltType, comparator:?rec=defaultComparato
 }
 
 /*
-  Binary searches for the index of the last occurrence of `val` in the 1D array `Data` based on a comparator.
-  If `val` is not in `Data`, the index that it should be inserted at is returned.
+  Binary searches for the index of the last occurrence of `val` in the 1D array
+  `Data` based on a comparator.
+  If `val` is not in `Data`, the index that it should be inserted at is
+  returned.
   Does not check for a valid comparator.
+
 */
-private proc _binarySearchForLastOccurrence(Data: [?Dom], val, comparator:?rec=defaultComparator, in lo=Dom.low, in hi=Dom.high) {
+private proc _binarySearchForLastOccurrence(Data: [?Dom], val,
+                                            comparator:?rec=defaultComparator,
+                                            in lo=Dom.low, in hi=Dom.high) {
+  assert(lo <= hi);
   const stride = if Dom.stridable then abs(Dom.stride) else 1;
 
-  var loc = -1;                                        // index of the last occurrence of val in Data
+  var loc = -1;                   // index of the last occurrence of val in Data
 
   while (lo <= hi) {
     const size = (hi - lo) / stride,
           mid = lo + (size/2) * stride;
 
     if chpl_compare(val, Data[mid], comparator) == 0 {
-        loc = mid;                                    // index of last occurrence of val in 1..mid
+        loc = mid;                // index of last occurrence of val in 1..mid
         lo = loc + stride;
     }
     else if chpl_compare(val, Data[mid], comparator) > 0 then
@@ -567,13 +580,14 @@ private proc _binarySearchForLastOccurrence(Data: [?Dom], val, comparator:?rec=d
       hi = mid - stride;
   }
 
-  if loc == -1 then return (false, lo);              // returns index where val should be
-  return (true, loc);                                // returns index of the last occurrence of val
+  if loc == -1 then return (false, lo);     // returns index where val should be
+  return (true, loc);             // returns index of the last occurrence of val
 }
 
 pragma "no doc"
 /* Error message for multi-dimension arrays */
-proc binaryInsertionSort(Data: [?Dom] ?eltType, comparator:?rec=defaultComparator)
+proc binaryInsertionSort(Data: [?Dom] ?eltType,
+                         comparator:?rec=defaultComparator)
   where Dom.rank != 1 {
     compilerError("binaryInsertionSort() requires 1-D array");
 }
