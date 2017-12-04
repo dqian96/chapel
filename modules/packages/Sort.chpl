@@ -593,6 +593,138 @@ proc binaryInsertionSort(Data: [?Dom] ?eltType,
 }
 
 
+// The minimum size of an array required for merge
+private const MIN_MERGE: int = 32;
+
+/*
+  Compute the min run length for an array with the given 1D domain.
+  Let size be the size of the array as described by the domain (after stride).
+
+  If size < MIN_MERGE, return size as the array is sorted using binary
+  insertion sort.
+  Else if size is a power of 2, then return MIN_MERGE/2
+  Else, return k such that MIN_MERGE <= k <= MIN_MERGE, such that size/k
+  is close to, but less than a power of 2
+
+  See Tim Peter's listsort.txt for more details.
+*/
+private proc _computeMinRunLength(lo: int, hi: int, stride: int): int {
+  assert(lo <= hi);
+  const size = (hi + 1 - lo)/stride;
+  if size == 0 then return 0;
+
+  var r = 0;                    // Becomes 1 if any 1 bits are shifted off
+  while (size >= MIN_MERGE) {
+      r |= (size & 1);
+      size >>= 1;
+  }
+  return size + r;
+}
+
+/*
+  Reverse the array `Data` inplace between a given lower and upper bound.
+*/
+private proc _reverse(Data: [?Dom] ?eltType,
+                      comparator:?rec=defaultComparator,
+                      in lo=Dom.low, in hi=Dom.high): int {
+  assert(lo <= hi);
+  const stride = if Dom.stridable then abs(Dom.stride) else 1;
+  while (lo <= hi) {
+    Data[lo] <=> Data[hi];
+    lo += stride;
+    hi += stride;
+  }
+}
+
+/*
+  Return the length of the first run of the array `Data` starting from a given
+  lower bound, up until a maximum given upper bound
+*/
+private proc _createFirstRun(Data: [?Dom] ?eltType,
+                        comparator:?rec=defaultComparator,
+                        in runStart=Dom.low, in limit=Dom.high): int {
+  assert(runStart <= limit);
+  const stride = if Dom.stridable then abs(Dom.stride) else 1;
+
+  if runStart == limit then return 1;     // run is of size 1
+
+  var next = runStart + stride;
+  var runSize = 1;                       // run must be of size > 1
+
+  while (Data[next] >= Data[runStart] && next <= limit) {
+    // ascending run
+    runSize += 1;
+    next += stride;
+  }
+  if runSize != 1 then return runSize;  // ascending run was found
+
+  while (Data[next] < Data[runStart] && next <= limit) {
+    // descending run
+    runSize += 1;
+    next += stride;
+  }
+  // stable reverse
+  return runSize;
+}
+
+/*
+   Sort the 1D array `Data` in-place using the Tim Sort algorithm.
+   Tim Sort is a concurrent algorithm that minimizes the number of comparisions.
+
+   This algorithm is based on Tim Peter's list sort for Python, which
+   is detailed here:
+   http://svn.python.org/projects/python/trunk/Objects/listsort.txt
+
+   Tim's implementation is given here:
+   http://svn.python.org/projects/python/trunk/Objects/listobject.c
+
+   :arg Data: The array to be sorted
+   :type Data: [] `eltType`
+   :arg comparator: :ref:`Comparator <comparators>` record that defines how the
+      data is sorted.
+   :arg lo: Lower bound of sort
+   :type lo: `Dom.idxType`
+   :arg hi: Upper bound of sort
+   :type hi: `Dom.idxType`
+
+ */
+proc timSort(Data: [?Dom] ?eltType,
+             comparator:?rec=defaultComparator,
+             in lo=Dom.low, in hi=Dom.high) {
+  chpl_check_comparator(comparator, eltType);
+  assert(lo <= hi);
+
+  if (lo == hi) then return;          // trivially sorted array
+  const stride = if Dom.stridable then abs(Dom.stride) else 1;
+
+  // determine the min run length (ideally a power of 2, or approaching)
+  var minRunLength = _computeMinRunLength(lo, hi, stride);
+  var runStack: [1..#0] (int, int);   // hold runs
+  var runStart = lo;
+  while (runStart <= hi) {
+    var runSize = _createFirstRun(Data, comparator, runStart, hi);
+    if runSize < minRunLength {
+      // extend using binary insertion sort
+      binaryInsertionSort(Data, comparator,
+                          runStart + runSize, runStart + minRunLength);
+      runStart += minRunLength + stride;
+    } else {
+      runStart += runSize + stride;
+    }
+    // put on stack
+  }
+
+}
+
+pragma "no doc"
+/* Error message for multi-dimension arrays */
+proc timSort(Data: [?Dom] ?eltType,
+             comparator:?rec=defaultComparator)
+  where Dom.rank != 1 {
+    compilerError("timSort() requires 1-D array");
+}
+
+
 /*
    Sort the 1D array `Data` in-place using a parallel merge sort algorithm.
 
